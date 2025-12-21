@@ -105,26 +105,36 @@ def main(config):
 
 @ray.remote
 def main_task(config):
-    from verl.utils.fs import copy_local_path_from_hdfs
+    from verl.utils.fs import copy_local_path_from_hdfs  # 下载远程模型到本地，并返回本地的地址，如果是本地地址则直接返回
     from transformers import AutoTokenizer
 
     # print initial config
     from pprint import pprint
     from omegaconf import OmegaConf
+    # OmegaConf.to_container(config, resolve=True)：
+    # 将 OmegaConf 对象转换为普通的 Python 字典/列表
+    # resolve=True：解析所有变量引用和插值表达式
     pprint(OmegaConf.to_container(config, resolve=True))  # resolve=True will eval symbol values
+    # 直接在原 config 对象上解析所有插值
+    # 确保后续代码访问 config.xxx 时得到的是已解析的实际值
+    # 这是原地修改，之后使用 config 就不需要再手动解析了
     OmegaConf.resolve(config)
 
     # download the checkpoint from hdfs
+    # 返回模型的本地地址
     local_path = copy_local_path_from_hdfs(config.actor_rollout_ref.model.path)
 
     # instantiate tokenizer
     from verl.utils import hf_tokenizer
+    # 实例化 tokenizer，并设置pad_token_id为eos_token_id，在pad_token为空时
     tokenizer = hf_tokenizer(local_path)
 
     # define worker classes
     if config.actor_rollout_ref.actor.strategy == 'fsdp':
+        # 选择以FSDP为训练框架作为后端
         assert config.actor_rollout_ref.actor.strategy == config.critic.strategy
         from verl.workers.fsdp_workers import ActorRolloutRefWorker, CriticWorker
+        # 使用RayWorkerGroup作为worker组管理器
         from verl.single_controller.ray import RayWorkerGroup
         ray_worker_group_cls = RayWorkerGroup
 
@@ -140,19 +150,19 @@ def main_task(config):
     from verl.trainer.ppo.ray_trainer import ResourcePoolManager, Role
 
     role_worker_mapping = {
-        Role.ActorRollout: ray.remote(ActorRolloutRefWorker),
-        Role.Critic: ray.remote(CriticWorker),
-        Role.RefPolicy: ray.remote(ActorRolloutRefWorker)
+        Role.ActorRollout: ray.remote(ActorRolloutRefWorker),  # 注册为远程actor
+        Role.Critic: ray.remote(CriticWorker),  # 注册为远程actor
+        Role.RefPolicy: ray.remote(ActorRolloutRefWorker)  # 注册为远程actor
     }
 
     global_pool_id = 'global_pool'
     resource_pool_spec = {
         global_pool_id: [config.trainer.n_gpus_per_node] * config.trainer.nnodes,
-    }
+    } # 定义每个节点上使用的GPU数量
     mapping = {
-        Role.ActorRollout: global_pool_id,
-        Role.Critic: global_pool_id,
-        Role.RefPolicy: global_pool_id,
+        Role.ActorRollout: global_pool_id, # Actor可以使用的资源池
+        Role.Critic: global_pool_id, # Critic可以使用的资源池
+        Role.RefPolicy: global_pool_id, # RefPolicy可以使用的资源池
     }
 
     # we should adopt a multi-source reward function here
@@ -162,6 +172,7 @@ def main_task(config):
     # - finally, we combine all the rewards together
     # - The reward type depends on the tag of the data
     if config.reward_model.enable:
+        # 如果启用奖励模型
         if config.reward_model.strategy == 'fsdp':
             from verl.workers.fsdp_workers import RewardModelWorker
         elif config.reward_model.strategy == 'megatron':
@@ -171,11 +182,14 @@ def main_task(config):
         role_worker_mapping[Role.RewardModel] = ray.remote(RewardModelWorker)
         mapping[Role.RewardModel] = global_pool_id
 
+    # 定义训练时候的奖励函数
     reward_fn = RewardManager(tokenizer=tokenizer, num_examine=0)
 
     # Note that we always use function-based RM for validation
+    # 定义验证时候的奖励函数
     val_reward_fn = RewardManager(tokenizer=tokenizer, num_examine=1)
 
+    # 定义资源池管理器
     resource_pool_manager = ResourcePoolManager(resource_pool_spec=resource_pool_spec, mapping=mapping)
 
     trainer = RayPPOTrainer(config=config,

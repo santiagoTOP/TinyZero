@@ -324,6 +324,8 @@ class RayPPOTrainer(object):
         self.ray_worker_group_cls = ray_worker_group_cls
 
         # define KL control
+        # Reward_final = Reward_original - β × KL(π || π_ref)
+        # 用来调控β的值，β越大，KL惩罚越大，β越小，KL惩罚越小
         if self.use_reference_policy:
             if config.algorithm.kl_ctrl.type == 'fixed':
                 self.kl_ctrl = core_algos.FixedKLController(kl_coef=config.algorithm.kl_ctrl.kl_coef)
@@ -384,8 +386,11 @@ class RayPPOTrainer(object):
         self.total_training_steps = total_training_steps
         print(f'Total training steps: {self.total_training_steps}')
 
-        OmegaConf.set_struct(self.config, True)
-        with open_dict(self.config):
+        # 这段代码在运行时计算总训练步数，然后临时解除 OmegaConf 的结构保护
+        # 将这个值注入到 Actor 和 Critic 的优化器配置中，供学习率调度器使用。
+        # 注入完成后，配置重新变为只读，防止意外修改。
+        OmegaConf.set_struct(self.config, True)  # 启动保护机制
+        with open_dict(self.config):  # 临时解除保护，允许修改配置
             self.config.actor_rollout_ref.actor.optim.total_training_steps = total_training_steps
             self.config.critic.optim.total_training_steps = total_training_steps
 
@@ -444,12 +449,13 @@ class RayPPOTrainer(object):
     def init_workers(self):
         """Init resource pool and worker group"""
         self.resource_pool_manager.create_resource_pool()
-
+        # 创建资源池到类的映射，用于创建WorkerGroup
         self.resource_pool_to_cls = {pool: {} for pool in self.resource_pool_manager.resource_pool_dict.values()}
 
         # create actor and rollout
         if self.hybrid_engine:
-            resource_pool = self.resource_pool_manager.get_resource_pool(Role.ActorRollout)
+            resource_pool = self.resource_pool_manager.get_resource_pool(Role.ActorRollout) # 获取ActorRollout可以使用的资源池
+            # 包装ActorRollout类以及对应的初始化参数，用于创建WorkerGroup
             actor_rollout_cls = RayClassWithInitArgs(cls=self.role_worker_mapping[Role.ActorRollout],
                                                      config=self.config.actor_rollout_ref,
                                                      role='actor_rollout')
