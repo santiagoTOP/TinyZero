@@ -64,9 +64,9 @@ class ClassWithInitArgs:
     """
 
     def __init__(self, cls, *args, **kwargs) -> None:
-        self.cls = cls
-        self.args = args
-        self.kwargs = kwargs
+        self.cls = cls  # 保存 Ray Actor 类
+        self.args = args  # 保存初始化参数
+        self.kwargs = kwargs  # 保存初始化参数
 
     # def add_arg(self, arg):
     #     self.args += (arg,)

@@ -431,7 +431,14 @@ def create_colocated_worker_cls(class_dict: dict[str, RayClassWithInitArgs]):
         else:
             assert worker_cls == cls.cls.__ray_actor_class__.__base__, \
                 'the worker class should be the same when share the same process'
+        # 提取所有类和初始化参数
         cls_dict[key] = cls.cls
+        # 结果：
+        # cls_dict = {
+        #     'actor_rollout': ActorRolloutRefWorker,
+        #     'critic': CriticWorker,
+        #     'ref': ActorRolloutRefWorker
+        # }
         init_args_dict[key] = {'args': cls.args, 'kwargs': cls.kwargs}
 
     assert cls_dict.keys() == init_args_dict.keys()
@@ -443,17 +450,23 @@ def create_colocated_worker_cls(class_dict: dict[str, RayClassWithInitArgs]):
             super().__init__()
             self.worker_dict = {}
             for key, user_defined_cls in cls_dict.items():
-                user_defined_cls = _unwrap_ray_remote(user_defined_cls)
+                user_defined_cls = _unwrap_ray_remote(user_defined_cls) # 获取类本身，而不是远程actor，例如ActorRolloutRefWorker，而不是远程actor ActorRolloutRefWorker
                 # directly instantiate the class without remote
-                with patch.dict(os.environ, {'DISABLE_WORKER_INIT': '1'}):
+                # 在初始化时，禁用Worker的初始化，什么意思：在Worker的初始化过程中，会调用Worker的初始化函数，如果初始化函数中调用了其他Actor的初始化函数，会导致循环调用，因此需要禁用Worker的初始化
+                with patch.dict(os.environ, {'DISABLE_WORKER_INIT': '1'}): 
+                    # 在同一个进程中实例化所有 worker
                     self.worker_dict[key] = user_defined_cls(*init_args_dict[key].get('args', ()),
                                                              **init_args_dict[key].get('kwargs', {}))
 
     # now monkey-patch the methods from inner class to WorkerDict
+    # 将每个 worker 的方法绑定到 WorkerDict 上
+    # 这样你就可以调用：
+    # worker_dict.actor_rollout__generate_sequences()  # 调用 actor_rollout 的方法
+    # worker_dict.critic__compute_values()             # 调用 critic 的方法
     for key, user_defined_cls in cls_dict.items():
         user_defined_cls = _unwrap_ray_remote(user_defined_cls)
         _bind_workers_method_to_parent(WorkerDict, key, user_defined_cls)
-
+    # 转换为 Ray Remote Actor
     remote_cls = ray.remote(WorkerDict)
-    remote_cls = RayClassWithInitArgs(cls=remote_cls)
+    remote_cls = RayClassWithInitArgs(cls=remote_cls) # 包装为 RayClassWithInitArgs，以便在初始化时传递初始化参数
     return remote_cls

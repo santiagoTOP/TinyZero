@@ -66,10 +66,10 @@ class ResourcePoolManager:
             # max_colocate_count means the number of WorkerGroups (i.e. processes) in each RayResourcePool
             # For FSDP backend, we recommend using max_colocate_count=1 that merge all WorkerGroups into one.
             # For Megatron backend, we recommend using max_colocate_count>1 that can utilize different WorkerGroup for differnt models
-            resource_pool = RayResourcePool(process_on_nodes=process_on_nodes,
-                                            use_gpu=True,
-                                            max_colocate_count=1,
-                                            name_prefix=resource_pool_name)
+            resource_pool = RayResourcePool(process_on_nodes=process_on_nodes, # 定义每个节点上使用的GPU数量
+                                            use_gpu=True, # 是否使用GPU
+                                            max_colocate_count=1, # 定义每个资源池中可以同时放置的WorkerGroup数量
+                                            name_prefix=resource_pool_name) # 定义资源池的名称
             self.resource_pool_dict[resource_pool_name] = resource_pool
 
     def get_resource_pool(self, role: Role) -> RayResourcePool:
@@ -447,6 +447,69 @@ class RayPPOTrainer(object):
         return metric_dict
 
     def init_workers(self):
+        """
+        # ========== 第 1 步：准备类字典 ==========
+        class_dict = {
+            'actor_rollout': RayClassWithInitArgs(ActorRolloutRefWorker, ...),
+            'critic': RayClassWithInitArgs(CriticWorker, ...),
+            'ref': RayClassWithInitArgs(ActorRolloutRefWorker, ...)
+        }
+
+        # ========== 第 2 步：创建 WorkerDict 类 ==========
+        worker_dict_cls = create_colocated_worker_cls(class_dict)
+        # 内部创建了：
+        # class WorkerDict(Worker):
+        #     def __init__(self):
+        #         self.worker_dict = {
+        #             'actor_rollout': ActorRolloutRefWorker(...),
+        #             'critic': CriticWorker(...),
+        #             'ref': ActorRolloutRefWorker(...)
+        #         }
+        #     
+        #     # 方法被 monkey-patch 上去：
+        #     def actor_rollout__generate_sequences(self, data):
+        #         return self.worker_dict['actor_rollout'].generate_sequences(data)
+        #     
+        #     def critic__compute_values(self, data):
+        #         return self.worker_dict['critic'].compute_values(data)
+        #     
+        #     def ref__compute_ref_log_prob(self, data):
+        #         return self.worker_dict['ref'].compute_ref_log_prob(data)
+
+        # ========== 第 3 步：创建 WorkerGroup ==========
+        wg_dict = RayWorkerGroup(resource_pool=pool, ray_cls_with_init=worker_dict_cls)
+        # 在每个 GPU 上实例化 WorkerDict：
+        # GPU 0: WorkerDict 实例 (包含 actor_rollout, critic, ref)
+        # GPU 1: WorkerDict 实例 (包含 actor_rollout, critic, ref)
+        # GPU 2: WorkerDict 实例 (包含 actor_rollout, critic, ref)
+        # GPU 3: WorkerDict 实例 (包含 actor_rollout, critic, ref)
+
+        # ========== 第 4 步：Spawn 独立视图 ==========
+        spawn_wg = wg_dict.spawn(prefix_set=['actor_rollout', 'critic', 'ref'])
+        # spawn_wg = {
+        #     'actor_rollout': WorkerGroup(只暴露 actor_rollout 方法),
+        #     'critic': WorkerGroup(只暴露 critic 方法),
+        #     'ref': WorkerGroup(只暴露 ref 方法)
+        # }
+        # 但它们都指向同一组 WorkerDict 实例！
+
+        # ========== 第 5 步：使用 ==========
+        actor_rollout_wg = spawn_wg['actor_rollout']
+        actor_rollout_wg.generate_sequences(data)
+
+        # 实际执行路径：
+        # 1. actor_rollout_wg.generate_sequences(data)
+        # 2. → wg_dict.execute_all('generate_sequences', data)
+        # 3. → Ray RPC 到所有 GPU 的 WorkerDict 实例
+        # 4. → WorkerDict.actor_rollout__generate_sequences(data)
+        # 5. → self.worker_dict['actor_rollout'].generate_sequences(data)
+        # 6. → ActorRolloutRefWorker.generate_sequences(data) ← 最终执行
+
+        # ========== 第 6 步：保持引用 ==========
+        self.wg_dicts.append(wg_dict)  # ← 保持对 WorkerDict 的引用
+        
+        """
+        breakpoint()
         """Init resource pool and worker group"""
         self.resource_pool_manager.create_resource_pool()
         # 创建资源池到类的映射，用于创建WorkerGroup
@@ -459,6 +522,7 @@ class RayPPOTrainer(object):
             actor_rollout_cls = RayClassWithInitArgs(cls=self.role_worker_mapping[Role.ActorRollout],
                                                      config=self.config.actor_rollout_ref,
                                                      role='actor_rollout')
+            # 在资源池中添加ActorRollout类
             self.resource_pool_to_cls[resource_pool]['actor_rollout'] = actor_rollout_cls
         else:
             raise NotImplementedError
@@ -495,10 +559,60 @@ class RayPPOTrainer(object):
         # See https://github.com/volcengine/verl/blob/master/examples/ray/tutorial.ipynb for more information.
         all_wg = {}
         self.wg_dicts = []
+        # create_colocated_worker_cls 的作用：
+        # ✅ 合并多个 Worker 到同一进程：Actor、Rollout、Ref 共享一个进程
+        # ✅ 节省 GPU 内存：共享模型权重，不需要多次加载
+        # ✅ 减少通信开销：进程内通信比进程间通信快得多
+        # ✅ 提高资源利用率：通过时间分片共享 GPU
+        # 这是 FSDP 模式下的关键优化技术，让多个角色高效地共享同一个 GPU！
         for resource_pool, class_dict in self.resource_pool_to_cls.items():
             worker_dict_cls = create_colocated_worker_cls(class_dict=class_dict)
+            # 创建 WorkerGroup
             wg_dict = self.ray_worker_group_cls(resource_pool=resource_pool, ray_cls_with_init=worker_dict_cls)
+            # 生成独立的 WorkerGroup 引用
+            # WorkerDict 内部结构
+            # WorkerDict {
+            #     worker_dict: {
+            #         'actor_rollout': ActorRolloutRefWorker实例,
+            #         'critic': CriticWorker实例,
+            #         'ref': ActorRolloutRefWorker实例
+            #     }
+            # }
+            # 但是，这些 worker 的方法被重命名了（添加了前缀）
+            # WorkerDict 的方法
+            # worker_dict.actor_rollout__generate_sequences()  # ← 有前缀
+            # worker_dict.actor_rollout__update_actor()
+            # worker_dict.critic__compute_values()             # ← 有前缀
+            # worker_dict.ref__compute_ref_log_prob()          # ← 有前缀
+            # 希望能这样调用
+            # actor_rollout_wg.generate_sequences()  # ← 没有前缀
+            # critic_wg.compute_values()             # ← 没有前缀
+            # ref_wg.compute_ref_log_prob()          # ← 没有前缀
             spawn_wg = wg_dict.spawn(prefix_set=class_dict.keys())
+            # spawn_wg = {
+            #     'actor_rollout': WorkerGroup(...),
+            #     'ref': WorkerGroup(...)
+            # }
+
+            # spawn_wg = wg_dict.spawn(prefix_set=class_dict.keys()) 的作用：
+            # ✅ 创建独立视图：为每个 colocated worker 创建独立的 WorkerGroup 对象
+            # ✅ 去掉方法前缀：actor_rollout__generate_sequences → generate_sequences
+            # ✅ 保持共享进程：所有视图指向同一个底层 Ray Actor
+            # ✅ 简化 API：使用方式与独立 WorkerGroup 一致
+            # 这是一个代理模式（Proxy Pattern）的应用，让 colocated workers 的使用体验与独立 workers 完全一致！
+            
+            # 必须带前缀调用
+            # wg_dict.execute_all('actor_rollout__generate_sequences', data)
+            # wg_dict.execute_all('critic__compute_values', data)
+            # wg_dict.execute_all('ref__compute_ref_log_prob', data)
+            # 可以不带前缀调用
+            # spawn_wg['actor_rollout'].execute_all('generate_sequences', data)
+            # spawn_wg['critic'].execute_all('compute_values', data)
+            # spawn_wg['ref'].execute_all('compute_ref_log_prob', data)
+
+            # # 或者更简洁
+            # actor_rollout_wg = spawn_wg['actor_rollout']
+            # actor_rollout_wg.generate_sequences(data)  # ← 就像独立的 WorkerGroup
             all_wg.update(spawn_wg)
             # keep the referece of WorkerDict to support ray >= 2.31. Ref: https://github.com/ray-project/ray/pull/45699
             self.wg_dicts.append(wg_dict)
