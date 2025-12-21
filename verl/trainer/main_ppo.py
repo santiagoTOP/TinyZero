@@ -186,6 +186,7 @@ def main_task(config):
                             reward_fn=reward_fn,
                             val_reward_fn=val_reward_fn)
     trainer.init_workers()
+    breakpoint()
     trainer.fit()
 
 
