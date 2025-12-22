@@ -588,6 +588,11 @@ class RayPPOTrainer(object):
             # actor_rollout_wg.generate_sequences()  # ← 没有前缀
             # critic_wg.compute_values()             # ← 没有前缀
             # ref_wg.compute_ref_log_prob()          # ← 没有前缀
+            """
+            其作用可不可以这样理解：每张卡上都有一个worker_dict,
+            每一个worker_dict都包含了ppo算法的多个角色，
+            通过这个代码以后，通过角色名称可以统一管理分布到不同卡上的同一角色的不同权重部分
+            """
             spawn_wg = wg_dict.spawn(prefix_set=class_dict.keys())
             # spawn_wg = {
             #     'actor_rollout': WorkerGroup(...),
@@ -619,7 +624,7 @@ class RayPPOTrainer(object):
 
         if self.use_critic:
             self.critic_wg = all_wg['critic']
-            self.critic_wg.init_model()
+            self.critic_wg.init_model()  # 统一初始化不同卡上同一个角色的不同权重部分
 
         if self.use_reference_policy:
             self.ref_policy_wg = all_wg['ref']
