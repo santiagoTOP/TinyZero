@@ -507,6 +507,14 @@ class RayPPOTrainer(object):
 
         # ========== 第 6 步：保持引用 ==========
         self.wg_dicts.append(wg_dict)  # ← 保持对 WorkerDict 的引用
+
+        # ========== 第 7 步：实际执行路径 ==========
+        1. actor_rollout_wg.generate_sequences(data)
+        2. → wg_dict.execute_all('generate_sequences', data)  
+        3. → Ray RPC 到所有 GPU 的 WorkerDict 实例
+        4. → WorkerDict.actor_rollout__generate_sequences(data)  # 带前缀的方法
+        5. → self.worker_dict['actor_rollout'].generate_sequences(data)  # 委托给内部 worker
+        6. → ActorRolloutRefWorker.generate_sequences(data)  # 真正的实现
         
         """
         breakpoint()
@@ -624,6 +632,26 @@ class RayPPOTrainer(object):
 
         if self.use_critic:
             self.critic_wg = all_wg['critic']
+            # 在fsdp_workers.py中，CriticWorker.init_model() 方法中
+            # self.critic_wg.init_model() 实际执行的是 CriticWorker.init_model() 方法，
+            # 并且会在所有 GPU 上的 CriticWorker 实例上并行执行。
+            """
+            1. self.critic_wg.init_model()
+            ↓
+            2. 触发 WorkerGroup 上动态绑定的 init_model 方法
+            ↓
+            3. func_generator 生成的包装函数（verl/single_controller/ray/base.py:36-46）
+            ↓
+            4. dispatch_fn: 分发数据到各个 worker
+            ↓
+            5. execute_fn: 执行 Ray RPC 调用所有 GPU 上的 worker
+            ↓
+            6. 每个 GPU 上的 WorkerDict.critic__init_model()
+            ↓
+            7. self.worker_dict['critic'].init_model()
+            ↓
+            8. CriticWorker.init_model() ← 真正的实现
+            """
             self.critic_wg.init_model()  # 统一初始化不同卡上同一个角色的不同权重部分
 
         if self.use_reference_policy:
