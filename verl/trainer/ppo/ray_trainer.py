@@ -566,8 +566,65 @@ class RayPPOTrainer(object):
         # ✅ 提高资源利用率：通过时间分片共享 GPU
         # 这是 FSDP 模式下的关键优化技术，让多个角色高效地共享同一个 GPU！
         for resource_pool, class_dict in self.resource_pool_to_cls.items():
+            """
+            具体方法的生成过程：
+            
+            第 569 行: worker_dict_cls = create_colocated_worker_cls(...)
+            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            📦 创建 WorkerDict 类
+            📌 绑定到：类
+            🏷️  方法名：带前缀 (critic__init_model)
+            🔧 函数类型：简单转发函数
+                def func(self, *args, **kwargs):
+                    return self.worker_dict['critic'].init_model(*args, **kwargs)
+
+
+            第 590 行: wg_dict = RayWorkerGroup(ray_cls_with_init=worker_dict_cls)
+            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            📦 创建 RayWorkerGroup 实例 (wg_dict)
+            📌 绑定到：实例
+            🏷️  方法名：带前缀 (critic__init_model)
+            🔧 函数类型：完整代理函数 (func_generator)
+                def func(*args, **kwargs):
+                    args, kwargs = dispatch_fn(...)
+                    output = execute_fn('critic__init_model', ...)
+                    output = ray.get(output)
+                    return collect_fn(...)
+
+
+            第 610 行: spawn_wg = wg_dict.spawn(prefix_set=...)
+            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            📦 创建独立的 RayWorkerGroup 实例 (critic_wg, actor_rollout_wg, ...)
+            📌 绑定到：新实例
+            🏷️  方法名：无前缀 (init_model) ← 🔥 去除前缀！
+            🔧 函数类型：完整代理函数 (func_generator)
+                def func(*args, **kwargs):
+                    args, kwargs = dispatch_fn(...)
+                    output = execute_fn('init_model', ...)  # ← 注意：这里还是用原来的带前缀方法
+                    output = ray.get(output)
+                    return collect_fn(...)
+            """
             worker_dict_cls = create_colocated_worker_cls(class_dict=class_dict)
             # 创建 WorkerGroup
+            """
+            第 571 行: wg_dict = RayWorkerGroup(...)
+                ↓
+            RayWorkerGroup.__init__ (第 178 行)
+                ↓
+            第 203 行: self._bind_worker_method(...)  ← 🔥 第一次绑定（带前缀的方法）
+                ↓
+            第 591 行: spawn_wg = wg_dict.spawn(...)
+                ↓
+            spawn 方法中调用 from_detached (第 312 行)
+                ↓
+            from_detached 调用 RayWorkerGroup.__init__ (第 286 行)
+                ↓
+            第 203 行: self._bind_worker_method(...)  ← 🔥 第二次绑定（再次绑定所有方法）
+                ↓
+            _rebind_actor_methods (第 315 行)  ← 🔥 去掉前缀
+                ↓
+            第 621 行: self.critic_wg = all_wg['critic']  ← 获取最终的 critic_wg
+            """
             wg_dict = self.ray_worker_group_cls(resource_pool=resource_pool, ray_cls_with_init=worker_dict_cls)
             # 生成独立的 WorkerGroup 引用
             # WorkerDict 内部结构
@@ -588,7 +645,7 @@ class RayPPOTrainer(object):
             # actor_rollout_wg.generate_sequences()  # ← 没有前缀
             # critic_wg.compute_values()             # ← 没有前缀
             # ref_wg.compute_ref_log_prob()          # ← 没有前缀
-            spawn_wg = wg_dict.spawn(prefix_set=class_dict.keys())
+            spawn_wg = wg_dict.spawn(prefix_set=class_dict.keys()) # ray/base.py
             # spawn_wg = {
             #     'actor_rollout': WorkerGroup(...),
             #     'ref': WorkerGroup(...)
@@ -619,6 +676,67 @@ class RayPPOTrainer(object):
 
         if self.use_critic:
             self.critic_wg = all_wg['critic']
+            """
+            时间点 1: 创建 WorkerGroup
+            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            wg_dict = RayWorkerGroup(...)
+                ↓
+            RayWorkerGroup.__init__
+                ↓
+            self._bind_worker_method(...)  ← 🔥 方法在这里被创建和绑定
+                ↓
+            遍历 Worker 类的所有方法
+                ↓
+            对于每个被 @register 装饰的方法:
+                1. 调用 func_generator 创建代理函数
+                2. setattr(self, 'init_model', func)  ← init_model 方法被添加到实例上
+                ↓
+            WorkerGroup 初始化完成
+            此时 wg_dict.init_model 已经存在 ✅
+
+
+            时间点 2: 调用方法（稍后）
+            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            self.critic_wg.init_model()  ← 调用已经存在的方法
+                ↓
+            执行 func_generator 生成的代理函数
+                ↓
+            1. dispatch_fn(...)  # 分发参数
+            2. execute_fn(...)   # 执行远程调用
+            3. ray.get(...)      # 等待结果
+            4. collect_fn(...)   # 收集结果
+
+            # 步骤 1: 你写的代码
+            self.critic_wg.init_model()
+
+            # 步骤 2: Python 解释器查找 init_model 属性
+            # 找到：init_model = func_generator(...) 返回的 func
+
+            # 步骤 3: 调用这个 func 函数
+            # 进入 base.py:38-44 的 func 函数体
+
+            # 步骤 4: 执行 func 内部的逻辑
+            def func(*args, **kwargs):  # ← 你在这里！(base.py:38)
+                # 第 39 行：分发参数
+                args, kwargs = dispatch_fn(self, *args, **kwargs)
+                
+                # 第 40 行：执行远程调用
+                # execute_fn 是 self.execute_all
+                # method_name 是 'init_model'（通过闭包捕获）
+                output = execute_fn('init_model', *args, **kwargs)
+                
+                # 第 41-42 行：等待结果
+                if blocking:
+                    output = ray.get(output)
+                
+                # 第 43 行：收集结果
+                output = collect_fn(self, output)
+                
+                # 第 44 行：返回
+                return output
+            
+            所有被 @register 装饰器装饰的方法都会通过 func_generator 生成代理函数。
+            """
             self.critic_wg.init_model()
 
         if self.use_reference_policy:

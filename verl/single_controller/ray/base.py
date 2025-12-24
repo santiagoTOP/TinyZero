@@ -390,7 +390,7 @@ def _bind_workers_method_to_parent(cls, key, user_defined_cls):
             # if it is a property, it will fail because Class doesn't have instance property
             continue
 
-        if hasattr(method, MAGIC_ATTR):
+        if hasattr(method, MAGIC_ATTR): # 如果方法被装饰器装饰了，则绑定到父类
 
             def generate_function(name):
 
@@ -467,6 +467,6 @@ def create_colocated_worker_cls(class_dict: dict[str, RayClassWithInitArgs]):
         user_defined_cls = _unwrap_ray_remote(user_defined_cls)
         _bind_workers_method_to_parent(WorkerDict, key, user_defined_cls)
     # 转换为 Ray Remote Actor
-    remote_cls = ray.remote(WorkerDict)
+    remote_cls = ray.remote(WorkerDict) # 包装为一个远程actor，以便在初始化时传递初始化参数
     remote_cls = RayClassWithInitArgs(cls=remote_cls) # 包装为 RayClassWithInitArgs，以便在初始化时传递初始化参数
     return remote_cls

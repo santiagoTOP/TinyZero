@@ -199,6 +199,7 @@ def main_task(config):
                             ray_worker_group_cls=ray_worker_group_cls,
                             reward_fn=reward_fn,
                             val_reward_fn=val_reward_fn)
+    breakpoint()
     trainer.init_workers()
     breakpoint()
     trainer.fit()
