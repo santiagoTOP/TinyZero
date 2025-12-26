@@ -157,7 +157,7 @@ class vLLMRollout(BaseRollout):
         idx_list = []
         # parse idx from torch.Tensor to List[List[str]]
         for i in range(batch_size):
-            idx_list.append(_pre_process_inputs(self.pad_token_id, idx[i]))
+            idx_list.append(_pre_process_inputs(self.pad_token_id, idx[i]))  # 预处理输入，去掉左边的padding
 
         do_sample = prompts.meta_info.get('do_sample', True)
         if not do_sample:
@@ -167,32 +167,32 @@ class vLLMRollout(BaseRollout):
                 'top_k': -1,
                 'min_p': 0.0,
                 'temperature': 0,
-                'n': 1  # if greedy, only 1 response
+                'n': 1  # if greedy, only 1 response  # 通过n控制生成结果的数量
             }
 
         # users can customize different sampling_params at different run
-        with self.update_sampling_params(**kwargs):
-            output = self.inference_engine.generate(
+        with self.update_sampling_params(**kwargs):  
+            output = self.inference_engine.generate( # 开始使用vllm进行生成
                 prompts=None,  # because we have already convert it to prompt token id
-                sampling_params=self.sampling_params,
+                sampling_params=self.sampling_params,  
                 prompt_token_ids=idx_list,
                 use_tqdm=False)
 
         # TODO(sgm): disable logprob when recompute_log_prob is enable
         # if n = 1: (bs, response_length) ; if n > 1: (bs * n, response_length)
         response = output[0].to(idx.device)
-        log_probs = output[1].to(idx.device)
+        log_probs = output[1].to(idx.device)  # 同时获取生成结果和log概率
 
-        if response.shape[1] < self.config.response_length:
+        if response.shape[1] < self.config.response_length:  # 如果生成结果长度小于配置的长度，则进行填充
             response = pad_sequence_to_length(response, self.config.response_length, self.pad_token_id)
             log_probs = pad_sequence_to_length(log_probs, self.config.response_length, self.pad_token_id)
 
-        if self.config.n > 1 and do_sample:
+        if self.config.n > 1 and do_sample:  # 一个prompt可能对应多个response
             idx = idx.repeat_interleave(self.config.n, dim=0)
             attention_mask = attention_mask.repeat_interleave(self.config.n, dim=0)
             position_ids = position_ids.repeat_interleave(self.config.n, dim=0)
             batch_size = batch_size * self.config.n
-        seq = torch.cat([idx, response], dim=-1)
+        seq = torch.cat([idx, response], dim=-1) # 一个prompt对应多个response，所以需要拼接
 
         response_length = response.size(1)
         delta_position_id = torch.arange(1, response_length + 1, device=position_ids.device)

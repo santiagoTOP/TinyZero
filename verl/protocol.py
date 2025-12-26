@@ -264,6 +264,7 @@ class DataProto:
 
     @classmethod
     def from_single_dict(cls, data: Dict[str, Union[torch.Tensor, np.ndarray]], meta_info=None):
+        # 这里的data是从数据集中采集出来的数据，每个key对应一个tensor或numpy数组
         tensors = {}
         non_tensors = {}
 
@@ -298,7 +299,7 @@ class DataProto:
         # get and check batch size
         batch_size = None
         pivot_key = None
-        for key, tensor in tensors.items():
+        for key, tensor in tensors.items():  # 确保所有的tensor都有相同的batch size
             if batch_size is None:
                 batch_size = tensor.shape[:num_batch_dims]
                 pivot_key = key
@@ -382,7 +383,7 @@ class DataProto:
         # tensor batch
         for key in batch_keys:
             assert key in self.batch.keys()
-            tensors[key] = self.batch.pop(key)
+            tensors[key] = self.batch.pop(key) # 从batch中删除key对应的tensor，存储到tensors中
         non_tensors = {}
         # non tensor batch
         for key in non_tensor_batch_keys:

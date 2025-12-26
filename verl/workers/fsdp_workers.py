@@ -400,7 +400,7 @@ class ActorRolloutRefWorker(Worker):
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def generate_sequences(self, prompts: DataProto):
         breakpoint()
-        prompts = prompts.to('cuda')
+        prompts = prompts.to('cuda') # prompt 是一个字典
         # set to False if it is validation
         recompute_log_prob = prompts.meta_info.get('recompute_log_prob', True)
 
@@ -416,8 +416,8 @@ class ActorRolloutRefWorker(Worker):
         with self.rollout_sharding_manager:
             log_gpu_memory_usage('After entering rollout sharding manager', logger=logger)
 
-            prompts = self.rollout_sharding_manager.preprocess_data(prompts)
-            output = self.rollout.generate_sequences(prompts=prompts)
+            prompts = self.rollout_sharding_manager.preprocess_data(prompts) # 聚合数据，确保每个rank都有相同的数据，确保 TP 组内每个 rank 都有完整数据
+            output = self.rollout.generate_sequences(prompts=prompts)  # 采样生成response
 
             log_gpu_memory_usage('After rollout generation', logger=logger)
 
