@@ -829,13 +829,84 @@ class RayPPOTrainer(object):
                     batch.non_tensor_batch['uid'] = np.array([str(uuid.uuid4()) for _ in range(len(batch.batch))],
                                                              dtype=object)
                     # repeat to align with repeated responses in rollout
-                    batch = batch.repeat(repeat_times=self.config.actor_rollout_ref.rollout.n, interleave=True)
+                    """
+                    假设 n=3，batch_size=2
+
+                    原始 batch:
+                    ├─ prompt_0: "What is 2+2?"
+                    │  └─ uid: "uuid-0"
+                    └─ prompt_1: "What is 3+3?"
+                    └─ uid: "uuid-1"
+
+                    ↓ generate_sequences (vLLM 生成 n=3 个 responses)
+
+                    gen_batch_output (6 个 responses):
+                    ├─ prompt_0 → response: "4" (reward: 1.0)
+                    ├─ prompt_0 → response: "5" (reward: 0.0)
+                    ├─ prompt_0 → response: "4" (reward: 1.0)
+                    ├─ prompt_1 → response: "6" (reward: 1.0)
+                    ├─ prompt_1 → response: "7" (reward: 0.0)
+                    └─ prompt_1 → response: "6" (reward: 1.0)
+
+                    ↓ batch.repeat(repeat_times=3, interleave=True)
+
+                    复制后的 batch (6 个):
+                    ├─ uid: "uuid-0"  ──┐
+                    ├─ uid: "uuid-0"    ├─ 同一组，计算相对优势
+                    ├─ uid: "uuid-0"  ──┘
+                    ├─ uid: "uuid-1"  ──┐
+                    ├─ uid: "uuid-1"    ├─ 同一组，计算相对优势
+                    └─ uid: "uuid-1"  ──┘
+
+                    ↓ compute_grpo_outcome_advantage
+
+                    GRPO 优势计算:
+                    - uuid-0 组: rewards=[1.0, 0.0, 1.0] → mean=0.67, std=0.47
+                    - response 0: advantage = (1.0-0.67)/0.47 = +0.70 ✅ 鼓励
+                    - response 1: advantage = (0.0-0.67)/0.47 = -1.43 ❌ 惩罚
+                    - response 2: advantage = (1.0-0.67)/0.47 = +0.70 ✅ 鼓励
+                    """
+                    batch = batch.repeat(repeat_times=self.config.actor_rollout_ref.rollout.n, interleave=True) # 复制其他数据以匹配生成的 responses 数量，在vllm采样的时候，一个prompt可能对应多个response，GRPO
+                    
+                    """
+                    原始 batch (从 dataloader 加载):
+                    ├─ input_ids: [prompt tokens]
+                    ├─ attention_mask: [prompt mask]
+                    ├─ position_ids: [prompt positions]
+                    └─ 其他数据 (如 labels, 等)
+
+                    ↓ pop(['input_ids', 'attention_mask', 'position_ids'])
+
+                    batch (pop 后):                      gen_batch (被 pop 出来):
+                    ├─ 其他数据                          ├─ input_ids: [prompt tokens]
+                                                        ├─ attention_mask: [prompt mask]
+                                                        └─ position_ids: [prompt positions]
+
+                    ↓ generate_sequences(gen_batch)
+
+                                                        gen_batch_output (生成后):
+                                                        ├─ prompts: [prompt tokens]
+                                                        ├─ responses: [response tokens]
+                                                        ├─ input_ids: [prompt + response] ⭐ 变化了！
+                                                        ├─ attention_mask: [full mask] ⭐ 变化了！
+                                                        └─ position_ids: [full positions] ⭐ 变化了！
+
+                    ↓ batch.repeat(n) + batch.union(gen_batch_output)
+
+                    batch (最终):
+                    ├─ 其他数据 (重复 n 次)
+                    ├─ prompts: [prompt tokens]
+                    ├─ responses: [response tokens]
+                    ├─ input_ids: [prompt + response] ⭐ 新的完整序列
+                    ├─ attention_mask: [full mask] ⭐ 新的完整 mask
+                    └─ position_ids: [full positions] ⭐ 新的完整 positions
+                    """
                     batch = batch.union(gen_batch_output)
 
                     # balance the number of valid tokens on each dp rank.
                     # Note that this breaks the order of data inside the batch.
                     # Please take care when you implement group based adv computation such as GRPO and rloo
-                    self._balance_batch(batch, metrics=metrics)
+                    self._balance_batch(batch, metrics=metrics) # 平衡每个dp rank的有效token数量，确保每个rank都有相同数量的有效token
 
                     # compute global_valid tokens
                     batch.meta_info['global_token_num'] = torch.sum(batch.batch['attention_mask'], dim=-1).tolist()

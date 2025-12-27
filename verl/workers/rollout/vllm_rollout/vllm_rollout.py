@@ -192,7 +192,7 @@ class vLLMRollout(BaseRollout):
             attention_mask = attention_mask.repeat_interleave(self.config.n, dim=0)
             position_ids = position_ids.repeat_interleave(self.config.n, dim=0)
             batch_size = batch_size * self.config.n
-        seq = torch.cat([idx, response], dim=-1) # 一个prompt对应多个response，所以需要拼接
+        seq = torch.cat([idx, response], dim=-1)
 
         response_length = response.size(1)
         delta_position_id = torch.arange(1, response_length + 1, device=position_ids.device)

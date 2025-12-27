@@ -232,16 +232,16 @@ def rearrange_micro_batches(batch: TensorDict, max_token_len, dp_group=None):
 
     seq_len_effective: torch.Tensor = batch['attention_mask'].sum(dim=1)
     total_seqlen = seq_len_effective.sum().item()
-    num_micro_batches = ceildiv(total_seqlen, max_token_len)
+    num_micro_batches = ceildiv(total_seqlen, max_token_len) # 计算需要多少个 micro_batches，向上取整
     if dist.is_initialized():
         num_micro_batches = torch.tensor([num_micro_batches], device='cuda')
         dist.all_reduce(num_micro_batches, op=dist.ReduceOp.MAX, group=dp_group)
         num_micro_batches = num_micro_batches.cpu().item()
 
-    seq_len_effective = seq_len_effective.tolist()
+    seq_len_effective = seq_len_effective.tolist() # 将 seq_len_effective 转换为列表
     assert num_micro_batches <= len(seq_len_effective)
 
-    micro_bsz_idx = get_seqlen_balanced_partitions(seq_len_effective, num_micro_batches, equal_size=False)
+    micro_bsz_idx = get_seqlen_balanced_partitions(seq_len_effective, num_micro_batches, equal_size=False) # 获取平衡的 partitions，确保每个 partition 的 seq_len 尽可能接近
 
     micro_batches = []
 
@@ -249,9 +249,9 @@ def rearrange_micro_batches(batch: TensorDict, max_token_len, dp_group=None):
         curr_micro_batch = []
         for idx in partition:
             curr_micro_batch.append(batch[idx:idx + 1])
-        curr_micro_batch = torch.cat(curr_micro_batch)
+        curr_micro_batch = torch.cat(curr_micro_batch)  # 将当前 partition 的样本拼接成一个 micro_batch
 
-        micro_batches.append(curr_micro_batch)
+        micro_batches.append(curr_micro_batch) # 将当前 partition 的 micro_batch 添加到 micro_batches 列表中
 
     return micro_batches, micro_bsz_idx
 

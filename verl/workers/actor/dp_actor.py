@@ -170,7 +170,6 @@ class DataParallelPPOActor(BasePPOActor):
         """
         # set to eval
         self.actor_module.eval()
-        breakpoint()
         micro_batch_size = data.meta_info['micro_batch_size']
         temperature = data.meta_info['temperature']  # temperature must be in the data.meta_info to avoid slient error
         use_dynamic_bsz = data.meta_info['use_dynamic_bsz']
@@ -181,7 +180,7 @@ class DataParallelPPOActor(BasePPOActor):
         if use_dynamic_bsz:
             # split using dynamic bsz
             max_token_len = data.meta_info['max_token_len'] * self.ulysses_sequence_parallel_size
-            micro_batches, indices = rearrange_micro_batches(batch=batch, max_token_len=max_token_len)
+            micro_batches, indices = rearrange_micro_batches(batch=batch, max_token_len=max_token_len) # 将 batch 切分成多个 micro_batches，确保每个 micro_batch 的 seq_len 尽可能接近
         else:
             micro_batches = batch.split(micro_batch_size)
 
@@ -192,7 +191,12 @@ class DataParallelPPOActor(BasePPOActor):
             log_probs_lst.append(log_probs)
         log_probs = torch.concat(log_probs_lst, dim=0)
 
-        if use_dynamic_bsz:
+        if use_dynamic_bsz: 
+            """
+            在使用动态 batch 切分后，将计算结果从"按 micro batch 顺序"恢复为"原始输入顺序"，
+            确保输出的 log_probs 与输入的 batch 顺序一一对应。
+            这对于后续的训练和梯度计算非常重要
+            """
             indices = list(itertools.chain.from_iterable(indices))
             assert len(indices) == log_probs.size(0), f"{len(indices)} vs. {log_probs.size()}"
             revert_indices = torch.tensor(get_reverse_idx(indices), dtype=torch.long)
@@ -251,6 +255,44 @@ class DataParallelPPOActor(BasePPOActor):
                                                                               eos_mask=response_mask,
                                                                               cliprange=clip_ratio)
                 # compute entropy loss from entropy
+                """
+                H(P) = -Σ P(x) * log(P(x))
+                    = -Σ P(x) * log(exp(logit(x)) / Σ exp(logit(y)))
+                    = -Σ P(x) * (logit(x) - log(Σ exp(logit(y))))
+                    = -Σ P(x) * logit(x) + log(Σ exp(logit(y))) * Σ P(x)
+                    = log(Σ exp(logit(y))) - Σ P(x) * logit(x)
+                    = logsumexp(logits) - sum(pd * logits)  ✅
+
+                logits = [2.0, 1.0, 0.5, -1.0]  # 4 个候选 token
+
+                # Step 1: 计算概率分布
+                pd = softmax(logits) = [0.576, 0.212, 0.128, 0.084]
+
+                # Step 2: 计算熵
+                logsumexp = log(exp(2.0) + exp(1.0) + exp(0.5) + exp(-1.0))
+                        = log(7.389 + 2.718 + 1.649 + 0.368)
+                        = log(12.124) = 2.496
+
+                sum_pd_logits = 0.576*2.0 + 0.212*1.0 + 0.128*0.5 + 0.084*(-1.0)
+                            = 1.152 + 0.212 + 0.064 - 0.084
+                            = 1.344
+
+                entropy = 2.496 - 1.344 = 1.152
+
+                # 验证（标准公式）:
+                H = -(0.576*log(0.576) + 0.212*log(0.212) + 0.128*log(0.128) + 0.084*log(0.084))
+                = -(0.576*(-0.552) + 0.212*(-1.550) + 0.128*(-2.055) + 0.084*(-2.477))
+                = -(-0.318 - 0.329 - 0.263 - 0.208)
+                = 1.118 ≈ 1.152 ✅ (数值误差)
+
+                计算每一个token位置的熵：
+                熵高：分布更均匀，策略更随机，探索更多
+                熵低：分布更集中，策略更确定，利用更多
+
+                在 PPO 中：
+                最大化熵 → 鼓励探索
+                最小化 policy_loss = pg_loss - entropy_loss * entropy_coeff → 等价于最大化熵（因为减去熵损失）
+                """
                 entropy_loss = verl_F.masked_mean(entropy, response_mask)
 
                 # compute policy loss

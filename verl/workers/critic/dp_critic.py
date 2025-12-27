@@ -177,7 +177,7 @@ class DataParallelPPOCritic(BasePPOCritic):
 
                 eos_mask = attention_mask[:, -response_length - 1:-1]
 
-                vpreds = self._forward_micro_batch(data)
+                vpreds = self._forward_micro_batch(data)  # 预测的每一个状态的价值
 
                 # assert not torch.any(torch.isnan(vpreds)).item()
 
@@ -186,8 +186,8 @@ class DataParallelPPOCritic(BasePPOCritic):
                                                                      returns=returns,
                                                                      eos_mask=eos_mask,
                                                                      cliprange_value=self.config.cliprange_value)
-                loss = vf_loss / self.gradient_accumulation
-                loss.backward()
+                loss = vf_loss / self.gradient_accumulation # 计算价值函数的损失，梯度累加
+                loss.backward() # 反向传播，计算梯度
 
                 data = {
                     'critic/vf_loss': vf_loss.detach().item(),
@@ -197,7 +197,7 @@ class DataParallelPPOCritic(BasePPOCritic):
 
                 append_to_dict(metrics, data)
 
-            grad_norm = self._optimizer_step()
+            grad_norm = self._optimizer_step() # 更新优化器，计算梯度
             data = {'critic/grad_norm': grad_norm.detach().item()}
             append_to_dict(metrics, data)
         self.critic_optimizer.zero_grad()

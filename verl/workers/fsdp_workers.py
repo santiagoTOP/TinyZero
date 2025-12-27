@@ -354,6 +354,7 @@ class ActorRolloutRefWorker(Worker):
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def update_actor(self, data: DataProto):
+        breakpoint()
         data = data.to('cuda')
 
         assert self._is_actor
@@ -421,7 +422,7 @@ class ActorRolloutRefWorker(Worker):
 
             log_gpu_memory_usage('After rollout generation', logger=logger)
 
-            output = self.rollout_sharding_manager.postprocess_data(output)
+            output = self.rollout_sharding_manager.postprocess_data(output) # 先广播结果确保一致性，然后切分数据，让每个 rank 只保留自己负责的部分，节省内存
 
         if self._is_actor and recompute_log_prob:
             # we should always recompute old_log_probs when it is HybridEngine
@@ -431,10 +432,10 @@ class ActorRolloutRefWorker(Worker):
             output.meta_info['temperature'] = self.config.rollout.temperature
             # perform recompute log_prob
             with self.ulysses_sharding_manager:
-                output = self.ulysses_sharding_manager.preprocess_data(output)
+                output = self.ulysses_sharding_manager.preprocess_data(output) # 聚合数据，确保每个rank都有相同的数据，确保 SP 组内每个 rank 都有完整数据
                 old_log_probs = self.actor.compute_log_prob(data=output)
                 output.batch['old_log_probs'] = old_log_probs
-                output = self.ulysses_sharding_manager.postprocess_data(output)
+                output = self.ulysses_sharding_manager.postprocess_data(output) # 先广播结果确保一致性，然后切分数据，让每个 rank 只保留自己负责的部分，节省内存
 
         output = output.to('cpu')
 
@@ -448,8 +449,8 @@ class ActorRolloutRefWorker(Worker):
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def compute_ref_log_prob(self, data: DataProto):
-        assert self._is_ref
         breakpoint()
+        assert self._is_ref
         data = data.to('cuda')
 
         if self._is_offload_param:
@@ -477,6 +478,7 @@ class ActorRolloutRefWorker(Worker):
 
     @register(dispatch_mode=Dispatch.ONE_TO_ALL)
     def save_checkpoint(self, local_path, hdfs_path=None):
+        breakpoint()
         assert self._is_actor
         import torch
         if self._is_offload_param:
@@ -673,6 +675,7 @@ class CriticWorker(Worker):
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def compute_values(self, data: DataProto):
+        breakpoint()
         data = data.to('cuda')
 
         if self._is_offload_param:
@@ -698,6 +701,7 @@ class CriticWorker(Worker):
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def update_critic(self, data: DataProto):
+        breakpoint()
         data = data.to('cuda')
         if self._is_offload_param:
             load_fsdp_param_and_grad(module=self.critic_module,
@@ -735,6 +739,7 @@ class CriticWorker(Worker):
 
     @register(dispatch_mode=Dispatch.ONE_TO_ALL)
     def save_checkpoint(self, local_path, hdfs_path=None):
+        breakpoint()
         import torch
         if self._is_offload_param:
             load_fsdp_param_and_grad(module=self.critic_module,
@@ -983,6 +988,7 @@ class RewardModelWorker(Worker):
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def compute_rm_score(self, data: DataProto):
+        breakpoint()
         import itertools
         from verl.utils.seqlen_balancing import rearrange_micro_batches, get_reverse_idx
         data = data.to('cuda')

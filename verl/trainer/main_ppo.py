@@ -49,7 +49,7 @@ class RewardManager():
         if 'rm_scores' in data.batch.keys():
             return data.batch['rm_scores']
 
-        reward_tensor = torch.zeros_like(data.batch['responses'], dtype=torch.float32)
+        reward_tensor = torch.zeros_like(data.batch['responses'], dtype=torch.float32) # 获取每一个状态下的及时奖励
 
         already_print_data_sources = {}
 
@@ -75,7 +75,7 @@ class RewardManager():
 
             # select rm_score
             data_source = data_item.non_tensor_batch['data_source']
-            compute_score_fn = _select_rm_score_fn(data_source)
+            compute_score_fn = _select_rm_score_fn(data_source)  # 根据数据源选择奖励函数
 
             score = compute_score_fn(solution_str=sequences_str, ground_truth=ground_truth)
             reward_tensor[i, valid_response_length - 1] = score
@@ -199,7 +199,7 @@ def main_task(config):
                             ray_worker_group_cls=ray_worker_group_cls,
                             reward_fn=reward_fn,
                             val_reward_fn=val_reward_fn)
-    breakpoint()
+                            
     trainer.init_workers()
     breakpoint()
     trainer.fit()
