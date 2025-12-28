@@ -91,7 +91,7 @@ class DataParallelPPOActor(BasePPOActor):
                 input_ids_rmpad_rolled = input_ids_rmpad_rolled.squeeze(0)  # ((total_nnz / sp) + pad)
 
                 # only pass input_ids and position_ids to enable flash_attn_varlen
-                output = self.actor_module(input_ids=input_ids_rmpad,
+                output = self.actor_module(input_ids=input_ids_rmpad, # 因为现代训练引擎的结果精度一般会比推理引擎更高（因为kernel fusion等底层因素）
                                            attention_mask=None,
                                            position_ids=position_ids_rmpad,
                                            use_cache=False)  # prevent model thinks we are generating

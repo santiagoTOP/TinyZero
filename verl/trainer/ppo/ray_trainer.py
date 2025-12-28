@@ -810,21 +810,21 @@ class RayPPOTrainer(object):
         # we start from step 1
         self.global_steps += 1
 
-        for epoch in range(self.config.trainer.total_epochs):
-            for batch_dict in self.train_dataloader:
+        for epoch in range(self.config.trainer.total_epochs):  # 全部的数据训练15轮
+            for batch_dict in self.train_dataloader:  # 每次训练一个batch
                 print(f'epoch {epoch}, step {self.global_steps}')
                 metrics = {}
                 timing_raw = {}
 
-                batch: DataProto = DataProto.from_single_dict(batch_dict)
+                batch: DataProto = DataProto.from_single_dict(batch_dict) # 将batch_dict转换为DataProto对象
 
                 # pop those keys for generation
-                gen_batch = batch.pop(batch_keys=['input_ids', 'attention_mask', 'position_ids'])
+                gen_batch = batch.pop(batch_keys=['input_ids', 'attention_mask', 'position_ids']) # 将batch中的input_ids, attention_mask, position_ids提取出来，此时原始的batch中不再包含这些key
 
                 with _timer('step', timing_raw):
                     # generate a batch
                     with _timer('gen', timing_raw):
-                        gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch)
+                        gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch) # 使用actor_rollout_wg生成响应
 
                     batch.non_tensor_batch['uid'] = np.array([str(uuid.uuid4()) for _ in range(len(batch.batch))],
                                                              dtype=object)
