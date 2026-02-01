@@ -134,7 +134,7 @@ def main_task(config):
         # 选择以FSDP为训练框架作为后端
         assert config.actor_rollout_ref.actor.strategy == config.critic.strategy
         from verl.workers.fsdp_workers import ActorRolloutRefWorker, CriticWorker
-        # 使用RayWorkerGroup作为worker组管理器
+        # 使用RayWorkerGroup作为worker组管理器，统一创建、分配资源、管理一组 Ray actors（ActorRollout/Critic/RefPolicy 等）
         from verl.single_controller.ray import RayWorkerGroup
         ray_worker_group_cls = RayWorkerGroup
 
