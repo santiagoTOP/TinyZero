@@ -68,6 +68,7 @@ class RayResourcePool(ResourcePool):
         pg_name_prefix = name if name else \
             f"{self.name_prefix}verl_group_{'_'.join([str(count) for count in self._store])}:"
         # print(f"pg_name_prefix = {pg_name_prefix}")
+        # 这里在预设每个placement group中包含的资源，例如每个placement group中包含的CPU数量和GPU数量
         pg_scheme = [[{
             "CPU": self.max_collocate_count,
             "GPU": 1
@@ -76,7 +77,7 @@ class RayResourcePool(ResourcePool):
         } for _ in range(process_count)] for process_count in self._store]
 
         lifetime = 'detached' if self.detached else None
-
+        # 创建placement group
         pgs = [
             placement_group(bundles=bundles, strategy=strategy, name=pg_name_prefix + str(idx), lifetime=lifetime)
             for idx, bundles in enumerate(pg_scheme)
@@ -170,7 +171,7 @@ class RayClassWithInitArgs(ClassWithInitArgs):
         # print("cls:", self.cls)
         # print("args: ", self.args)
         # print("kwargs: ", self.kwargs)
-        return self.cls.options(**options).remote(*self.args, **self.kwargs)
+        return self.cls.options(**options).remote(*self.args, **self.kwargs)  # 创建actor实例
 
 
 class RayWorkerGroup(WorkerGroup):
@@ -217,7 +218,7 @@ class RayWorkerGroup(WorkerGroup):
         strategy = "PACK"
         if bin_pack:
             strategy = "STRICT_PACK"
-        pgs = resource_pool.get_placement_groups(strategy=strategy)
+        pgs = resource_pool.get_placement_groups(strategy=strategy)  # 获取资源池中的所有placement group
         world_size = resource_pool.world_size
         self._world_size = world_size
         # cia.add_kwarg("_world_size", world_size)
@@ -225,24 +226,25 @@ class RayWorkerGroup(WorkerGroup):
 
         rank = -1
         for pg_idx, local_world_size in enumerate(resource_pool.store):
-            pg = pgs[pg_idx]
+            pg = pgs[pg_idx] # 获取第pg_idx个placement group，里面是bundle列表
             assert local_world_size <= pg.bundle_count, \
                 f"when generating for {self.name_prefix}, for the "
             for local_rank in range(local_world_size):
                 rank += 1
 
                 # we pass in environment variable at option so that Worker can use environment variable to set
+                # 这里设置环境变量，以便Worker可以使用环境变量来设置自己的变量
                 env_vars = {
                     'WORLD_SIZE': str(world_size),
-                    'RANK': str(rank),
+                    'RANK': str(rank), # 当前worker的rank
                     'WG_PREFIX': self.name_prefix,
                     'WG_BACKEND': 'ray',
                     'RAY_LOCAL_WORLD_SIZE': str(local_world_size),
                     'RAY_LOCAL_RANK': str(local_rank),
                 }
                 if rank != 0:
-                    env_vars['MASTER_ADDR'] = self._master_addr
-                    env_vars['MASTER_PORT'] = self._master_port
+                    env_vars['MASTER_ADDR'] = self._master_addr  # 当前worker的master地址， 通信地址
+                    env_vars['MASTER_PORT'] = self._master_port  # 当前worker的master端口， 通信端口
 
                 import re
                 cia_name = type(ray_cls_with_init.cls).__name__
@@ -250,14 +252,14 @@ class RayWorkerGroup(WorkerGroup):
                 cia_name = match.group(1) if match else cia_name  # "ActorClass(Obj)" -> "Obj"
                 name = f"{self.name_prefix}{cia_name}_{pg_idx}:{local_rank}"  # e.g. Worker_2:5
 
-                ray_cls_with_init.update_options({'runtime_env': {'env_vars': env_vars}, 'name': name})
+                ray_cls_with_init.update_options({'runtime_env': {'env_vars': env_vars}, 'name': name})  # 更新ray_cls_with_init的options， 当前worker的name 和 环境变量
 
                 if detached:
                     ray_cls_with_init.update_options({'lifetime': 'detached'})
 
-                # create a worker
+                # create a worker，执行了local_world_size次， 每个work（GPU）上都包含worker_dict_cls实例
                 worker = ray_cls_with_init(placement_group=pg,
-                                           placement_group_bundle_idx=local_rank,
+                                           placement_group_bundle_idx=local_rank,  # 指定当前worker在placement group中的bundle索引
                                            use_gpu=use_gpu,
                                            num_gpus=num_gpus)
                 self._workers.append(worker)
@@ -309,7 +311,7 @@ class RayWorkerGroup(WorkerGroup):
 
         new_worker_group_dict = {}
         for prefix in prefix_set:
-            new_worker_group = self.from_detached(worker_names=self._worker_names,
+            new_worker_group = self.from_detached(worker_names=self._worker_names,  # 复用了父类的_worker_names， 也就是所有worker的name，不创建worker
                                                   ray_cls_with_init=self.ray_cls_with_init)
 
             _rebind_actor_methods(new_worker_group, prefix)
@@ -427,6 +429,17 @@ def create_colocated_worker_cls(class_dict: dict[str, RayClassWithInitArgs]):
     worker_cls = None
     for key, cls in class_dict.items():
         if worker_cls == None:
+            """
+            部分	                          含义	                      示例
+            cls	                              RayClassWithInitArgs 实例	  -
+            cls.cls	                          Ray Actor 类	              ray.remote(ActorRolloutRefWorker)
+            cls.cls.__ray_actor_class__	      Ray 包装前的原始类	       ActorRolloutRefWorker
+            .__base__	                      该类的基类	               Worker 或 MegatronWorker
+            
+            共址的多个 worker（actor_rollout、critic、ref）必须继承同一个基类，这样：
+            WorkerDict 才能用统一的 worker_cls 作为父类；
+            所有 worker 的初始化流程一致，才能安全地放在同一个进程里。
+            """
             worker_cls = cls.cls.__ray_actor_class__.__base__
         else:
             assert worker_cls == cls.cls.__ray_actor_class__.__base__, \

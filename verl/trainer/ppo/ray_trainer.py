@@ -625,7 +625,6 @@ class RayPPOTrainer(object):
                 ↓
             第 621 行: self.critic_wg = all_wg['critic']  ← 获取最终的 critic_wg
             """
-            wg_dict = self.ray_worker_group_cls(resource_pool=resource_pool, ray_cls_with_init=worker_dict_cls)
             # 生成独立的 WorkerGroup 引用
             # WorkerDict 内部结构
             # WorkerDict {
@@ -645,6 +644,8 @@ class RayPPOTrainer(object):
             # actor_rollout_wg.generate_sequences()  # ← 没有前缀
             # critic_wg.compute_values()             # ← 没有前缀
             # ref_wg.compute_ref_log_prob()          # ← 没有前缀
+            wg_dict = self.ray_worker_group_cls(resource_pool=resource_pool, ray_cls_with_init=worker_dict_cls)
+            
             spawn_wg = wg_dict.spawn(prefix_set=class_dict.keys()) # ray/base.py
             # spawn_wg = {
             #     'actor_rollout': WorkerGroup(...),
