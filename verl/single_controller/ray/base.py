@@ -243,6 +243,7 @@ class RayWorkerGroup(WorkerGroup):
                     'RAY_LOCAL_RANK': str(local_rank),
                 }
                 if rank != 0:
+                    # 用于fsdp的nccl通信， 需要知道master的地址和端口
                     env_vars['MASTER_ADDR'] = self._master_addr  # 当前worker的master地址， 通信地址
                     env_vars['MASTER_PORT'] = self._master_port  # 当前worker的master端口， 通信端口
 

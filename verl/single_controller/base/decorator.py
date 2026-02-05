@@ -395,10 +395,10 @@ def register(dispatch_mode=Dispatch.ALL_TO_ALL, execute_mode=Execute.ALL, blocki
     _check_dispatch_mode(dispatch_mode=dispatch_mode)
     _check_execute_mode(execute_mode=execute_mode)
 
-    def decorator(func):
+    def decorator(func):  # 这里的func是用户定义的函数
 
         @wraps(func)
-        def inner(*args, **kwargs):
+        def inner(*args, **kwargs):  # 这里的args和kwargs是用户定义的函数传入的参数
             if materialize_futures:
                 args, kwargs = _materialize_futures(*args, **kwargs)
             return func(*args, **kwargs)
