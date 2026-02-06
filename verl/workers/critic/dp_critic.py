@@ -144,6 +144,22 @@ class DataParallelPPOCritic(BasePPOCritic):
         return values
 
     def update_critic(self, data: DataProto):
+        """
+        Full Batch（完整经验）
+        │
+        ├── Mini Batch 1  ──┬── Micro Batch 1.1  → forward + backward（梯度累加）
+        │                   ├── Micro Batch 1.2  → forward + backward
+        │                   └── Micro Batch 1.3  → forward + backward
+        │                          ↓
+        │                    optimizer.step()  ← 一次参数更新
+        │
+        ├── Mini Batch 2  ──┬── Micro Batch 2.1  → ...
+        │                   └── ...
+        │                          ↓
+        │                    optimizer.step()
+        │
+        └── ...
+        """
         # make sure we are in training mode
         self.critic_module.train()
         metrics = {}
