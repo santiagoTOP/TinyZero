@@ -775,12 +775,12 @@ class RayPPOTrainer(object):
         world_size = self.actor_rollout_wg.world_size
         global_partition_lst = get_seqlen_balanced_partitions(global_seqlen_lst,
                                                               k_partitions=world_size,
-                                                              equal_size=True)
+                                                              equal_size=True)  
         # reorder based on index. The data will be automatically equally partitioned by dispatch function
         global_idx = torch.tensor([j for partition in global_partition_lst for j in partition])
         batch.reorder(global_idx)
-        global_balance_stats = log_seqlen_unbalance(seqlen_list=global_seqlen_lst,
-                                                    partitions=global_partition_lst,
+        global_balance_stats = log_seqlen_unbalance(seqlen_list=global_seqlen_lst, # 原本的样本序列长度列表
+                                                    partitions=global_partition_lst, # 平衡后的样本序列，每个partition是一个列表，列表中是样本的索引
                                                     prefix=logging_prefix)
         metrics.update(global_balance_stats)
 

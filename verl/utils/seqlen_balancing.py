@@ -208,12 +208,12 @@ def log_seqlen_unbalance(seqlen_list: List[int], partitions: List[List[int]], pr
     max_sum_seqlen_balanced = max(balanced_sum_seqlen_list)
 
     return {
-        f'{prefix}/min': min_sum_seqlen,
-        f'{prefix}/max': max_sum_seqlen,
-        f'{prefix}/minmax_diff': max_sum_seqlen - min_sum_seqlen,
-        f'{prefix}/balanced_min': min_sum_seqlen_balanced,
-        f'{prefix}/balanced_max': max_sum_seqlen_balanced,
-        f'{prefix}/mean': total_sum_seqlen / len(partitions)
+        f'{prefix}/min': min_sum_seqlen,  # 使用顺序划分（按原始顺序切分）时，各分区中最小的序列长度总和
+        f'{prefix}/max': max_sum_seqlen,  # 使用顺序划分（按原始顺序切分）时，各分区中最大的序列长度总和
+        f'{prefix}/minmax_diff': max_sum_seqlen - min_sum_seqlen, # 使用顺序划分（按原始顺序切分）时，各分区中最大和最小序列长度总和的差值
+        f'{prefix}/balanced_min': min_sum_seqlen_balanced, # 使用平衡划分（按平衡顺序切分）时，各分区中最小的序列长度总和
+        f'{prefix}/balanced_max': max_sum_seqlen_balanced, # 使用平衡划分（按平衡顺序切分）时，各分区中最大的序列长度总和
+        f'{prefix}/mean': total_sum_seqlen / len(partitions) # 每个分区序列长度总和的平均值，即总序列长度 ÷ 分区数
     }
 
 
