@@ -171,7 +171,8 @@ class vLLMRollout(BaseRollout):
             }
 
         # users can customize different sampling_params at different run
-        with self.update_sampling_params(**kwargs):  
+        with self.update_sampling_params(**kwargs): # 更新采样参数，然后使用vllm进行生成
+            # 这里会同时输出生成结果和log概率
             output = self.inference_engine.generate( # 开始使用vllm进行生成
                 prompts=None,  # because we have already convert it to prompt token id
                 sampling_params=self.sampling_params,  
@@ -188,11 +189,11 @@ class vLLMRollout(BaseRollout):
             log_probs = pad_sequence_to_length(log_probs, self.config.response_length, self.pad_token_id)
 
         if self.config.n > 1 and do_sample:  # 一个prompt可能对应多个response
-            idx = idx.repeat_interleave(self.config.n, dim=0)
-            attention_mask = attention_mask.repeat_interleave(self.config.n, dim=0)
-            position_ids = position_ids.repeat_interleave(self.config.n, dim=0)
-            batch_size = batch_size * self.config.n
-        seq = torch.cat([idx, response], dim=-1)
+            idx = idx.repeat_interleave(self.config.n, dim=0) # 重复prompt
+            attention_mask = attention_mask.repeat_interleave(self.config.n, dim=0) # 重复attention_mask
+            position_ids = position_ids.repeat_interleave(self.config.n, dim=0) # 重复position_ids
+            batch_size = batch_size * self.config.n # 更新batch_size
+        seq = torch.cat([idx, response], dim=-1) # 将prompt和response拼接起来
 
         response_length = response.size(1)
         delta_position_id = torch.arange(1, response_length + 1, device=position_ids.device)
