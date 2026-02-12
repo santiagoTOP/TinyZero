@@ -510,7 +510,6 @@ class RayPPOTrainer(object):
         self.wg_dicts.append(wg_dict)  # ← 保持对 WorkerDict 的引用
         
         """
-        # breakpoint()
         """Init resource pool and worker group"""
         self.resource_pool_manager.create_resource_pool()
         # 创建资源池到类的映射，用于创建WorkerGroup

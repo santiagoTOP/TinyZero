@@ -354,7 +354,6 @@ class ActorRolloutRefWorker(Worker):
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def update_actor(self, data: DataProto):
-        breakpoint()
         data = data.to('cuda')
 
         assert self._is_actor
@@ -400,7 +399,6 @@ class ActorRolloutRefWorker(Worker):
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def generate_sequences(self, prompts: DataProto):
-        breakpoint()
         prompts = prompts.to('cuda') # prompt ÊÇÒ»¸ö×Öµä
         # set to False if it is validation
         recompute_log_prob = prompts.meta_info.get('recompute_log_prob', True)
@@ -449,7 +447,6 @@ class ActorRolloutRefWorker(Worker):
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def compute_ref_log_prob(self, data: DataProto):
-        breakpoint()
         assert self._is_ref
         data = data.to('cuda')
 
@@ -478,7 +475,6 @@ class ActorRolloutRefWorker(Worker):
 
     @register(dispatch_mode=Dispatch.ONE_TO_ALL)
     def save_checkpoint(self, local_path, hdfs_path=None):
-        breakpoint()
         assert self._is_actor
         import torch
         if self._is_offload_param:
@@ -675,7 +671,6 @@ class CriticWorker(Worker):
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def compute_values(self, data: DataProto):
-        breakpoint()
         data = data.to('cuda')
 
         if self._is_offload_param:
@@ -701,7 +696,6 @@ class CriticWorker(Worker):
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def update_critic(self, data: DataProto):
-        breakpoint()
         data = data.to('cuda')
         if self._is_offload_param:
             load_fsdp_param_and_grad(module=self.critic_module,
@@ -739,7 +733,6 @@ class CriticWorker(Worker):
 
     @register(dispatch_mode=Dispatch.ONE_TO_ALL)
     def save_checkpoint(self, local_path, hdfs_path=None):
-        breakpoint()
         import torch
         if self._is_offload_param:
             load_fsdp_param_and_grad(module=self.critic_module,
@@ -988,7 +981,6 @@ class RewardModelWorker(Worker):
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def compute_rm_score(self, data: DataProto):
-        breakpoint()
         import itertools
         from verl.utils.seqlen_balancing import rearrange_micro_batches, get_reverse_idx
         data = data.to('cuda')
