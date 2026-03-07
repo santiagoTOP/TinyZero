@@ -55,7 +55,7 @@ class ActorRolloutRefWorker(Worker):
         self.config = config
         import torch.distributed
         if not torch.distributed.is_initialized():
-            torch.distributed.init_process_group(backend="nccl")
+            torch.distributed.init_process_group(backend="nccl")  # 这里只是加入进程组，初始化在Worker.__init__中
 
         # build device mesh for FSDP
         world_size = torch.distributed.get_world_size()

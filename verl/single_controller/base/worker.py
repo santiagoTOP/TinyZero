@@ -82,7 +82,7 @@ class WorkerMeta:
 # we assume that in each WorkerGroup, there is a Master Worker
 class Worker(WorkerHelper):
 
-    def __new__(cls, *args, **kwargs):
+    def __new__(cls, *args, **kwargs):  # 在__init__之前执行
         instance = super().__new__(cls)
 
         # note that here we use int to distinguish
@@ -111,10 +111,12 @@ class Worker(WorkerHelper):
 
             if os.getenv("WG_BACKEND", None) == "ray":
                 from verl.single_controller.base.register_center.ray import create_worker_group_register_center
+                # 供RayWorkerGroup获取master地址和端口，见base.py中的279行
+                # self._master_addr, self._master_port = rank_zero_info['MASTER_ADDR'], rank_zero_info['MASTER_PORT']
                 self.register_center = create_worker_group_register_center(name=register_center_name,
-                                                                           info=rank_zero_info)
+                                                                           info=rank_zero_info)  
 
-            os.environ.update(rank_zero_info)
+            os.environ.update(rank_zero_info)  # 写入当前进程的环境变量 
 
     def __init__(self, cuda_visible_devices=None) -> None:
         # construct a meta from envrionment variable. Note that the import must be inside the class because it is executed remotely
@@ -124,8 +126,8 @@ class Worker(WorkerHelper):
         self._rank = rank
         self._world_size = world_size
 
-        master_addr = os.environ["MASTER_ADDR"]
-        master_port = os.environ["MASTER_PORT"]
+        master_addr = os.environ["MASTER_ADDR"]  # 从环境变量中读取master地址和端口
+        master_port = os.environ["MASTER_PORT"]  # 从环境变量中读取master地址和端口，NCCL获取通信地址和端口
 
         local_world_size = int(os.getenv("LOCAL_WORLD_SIZE", "1"))
         local_rank = int(os.getenv("LOCAL_RANK", "0"))
